@@ -1,0 +1,187 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TransportAPI Credentials",
+        "description": "Enter your TransportAPI credentials and bus stop code.\n\nSign up for free at {signup_url}\n\nThe free tier allows 30 requests per day.",
+        "data": {
+          "transportapi_app_id": "App ID",
+          "transportapi_app_key": "App Key",
+          "bus_stop_primary": "Primary Bus Stop (ATCO/NaPTAN code)",
+          "bus_stop_backup": "Backup Bus Stop (optional)",
+          "bus_routes": "Bus Routes Filter (comma-separated, leave empty for all)"
+        },
+        "data_description": {
+          "transportapi_app_id": "Your TransportAPI application ID",
+          "transportapi_app_key": "Your TransportAPI application key",
+          "bus_stop_primary": "The ATCO/NaPTAN code for your primary bus stop (e.g., 6200206710)",
+          "bus_stop_backup": "Optional backup bus stop code",
+          "bus_routes": "Filter to specific routes (e.g., 43,X43) or leave empty for all routes"
+        }
+      },
+      "commute_settings": {
+        "title": "Commute Settings",
+        "description": "Configure your commute window and thresholds.",
+        "data": {
+          "commute_window_start": "Commute Window Start (HH:MM)",
+          "commute_window_end": "Commute Window End (HH:MM)",
+          "commute_baseline": "Normal Commute Time (minutes)",
+          "traffic_delay_threshold": "Traffic Delay Threshold (minutes)",
+          "bus_gap_threshold": "Bus Gap Threshold (minutes)"
+        },
+        "data_description": {
+          "commute_window_start": "When your commute window starts (e.g., 08:00)",
+          "commute_window_end": "When your commute window ends (e.g., 09:00)",
+          "commute_baseline": "Your typical commute time in good conditions",
+          "traffic_delay_threshold": "Minutes above baseline to trigger extra checks",
+          "bus_gap_threshold": "Minutes until next bus to trigger extra checks"
+        }
+      },
+      "integrations": {
+        "title": "Integrations",
+        "description": "Connect to other Home Assistant integrations.",
+        "data": {
+          "waze_entity": "Waze Travel Time Entity",
+          "calendar_entity": "Work Calendar Entity",
+          "notify_service": "Notification Service (e.g., notify.mobile_app_iphone)",
+          "office_keywords": "Office Day Keywords (comma-separated)",
+          "wfh_keywords": "WFH Keywords (comma-separated)",
+          "scraper_url": "Scraper Microservice URL"
+        },
+        "data_description": {
+          "waze_entity": "Select your Waze Travel Time sensor",
+          "calendar_entity": "Select your work calendar",
+          "notify_service": "The notification service to use (e.g., notify.mobile_app_iphone)",
+          "office_keywords": "Calendar event keywords that indicate an office day",
+          "wfh_keywords": "Calendar event keywords that indicate working from home",
+          "scraper_url": "URL of the scraper microservice for fallback bus data"
+        }
+      },
+      "quota": {
+        "title": "API Quota Settings",
+        "description": "Configure TransportAPI quota management.\n\nThe free tier allows 30 requests per day.",
+        "data": {
+          "daily_quota": "Daily API Quota",
+          "reserved_for_manual": "Reserved for Manual Refresh",
+          "max_auto_calls": "Maximum Automatic Calls per Day"
+        },
+        "data_description": {
+          "daily_quota": "Total API calls allowed per day (free tier: 30)",
+          "reserved_for_manual": "API calls to reserve for manual refresh button",
+          "max_auto_calls": "Maximum automatic API calls per day"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid TransportAPI credentials",
+      "cannot_connect": "Cannot connect to TransportAPI",
+      "quota_exceeded": "TransportAPI quota exceeded",
+      "invalid_response": "Invalid response from TransportAPI - check your stop code",
+      "api_error": "TransportAPI returned an error",
+      "unknown": "An unknown error occurred",
+      "scraper_unavailable": "Scraper microservice is not available (optional)",
+      "scraper_error": "Scraper microservice returned an error"
+    },
+    "abort": {
+      "already_configured": "Commute Briefing is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Commute Briefing Options",
+        "description": "Modify your Commute Briefing settings.",
+        "data": {
+          "bus_stop_primary": "Primary Bus Stop (ATCO/NaPTAN code)",
+          "bus_stop_backup": "Backup Bus Stop (optional)",
+          "bus_routes": "Bus Routes Filter (comma-separated)",
+          "commute_window_start": "Commute Window Start (HH:MM)",
+          "commute_window_end": "Commute Window End (HH:MM)",
+          "commute_baseline": "Normal Commute Time (minutes)",
+          "traffic_delay_threshold": "Traffic Delay Threshold (minutes)",
+          "bus_gap_threshold": "Bus Gap Threshold (minutes)",
+          "daily_quota": "Daily API Quota",
+          "reserved_for_manual": "Reserved for Manual Refresh",
+          "max_auto_calls": "Maximum Automatic Calls per Day",
+          "notify_service": "Notification Service",
+          "office_keywords": "Office Day Keywords (comma-separated)",
+          "wfh_keywords": "WFH Keywords (comma-separated)",
+          "scraper_url": "Scraper Microservice URL"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_bus_minutes": {
+        "name": "Next Bus Minutes"
+      },
+      "next_bus_time": {
+        "name": "Next Bus Time"
+      },
+      "next_bus_route": {
+        "name": "Next Bus Route"
+      },
+      "next_bus_status": {
+        "name": "Next Bus Status"
+      },
+      "traffic_minutes": {
+        "name": "Traffic Time"
+      },
+      "traffic_delay": {
+        "name": "Traffic Delay"
+      },
+      "bus_data_source": {
+        "name": "Bus Data Source"
+      },
+      "api_calls_today": {
+        "name": "API Calls Today"
+      },
+      "auto_api_calls_today": {
+        "name": "Auto API Calls Today"
+      },
+      "last_check": {
+        "name": "Last Check"
+      }
+    },
+    "binary_sensor": {
+      "commute_day": {
+        "name": "Commute Day"
+      },
+      "can_call_api_auto": {
+        "name": "Can Call API (Auto)"
+      },
+      "can_call_api_manual": {
+        "name": "Can Call API (Manual)"
+      },
+      "potential_issue": {
+        "name": "Potential Issue"
+      }
+    },
+    "button": {
+      "refresh_commute": {
+        "name": "Refresh Commute"
+      },
+      "send_notification": {
+        "name": "Send Notification"
+      },
+      "reset_counters": {
+        "name": "Reset API Counters"
+      }
+    }
+  },
+  "services": {
+    "refresh_commute": {
+      "name": "Refresh Commute",
+      "description": "Manually refresh commute data (bus times and traffic)"
+    },
+    "send_notification": {
+      "name": "Send Notification",
+      "description": "Send a commute briefing notification"
+    },
+    "reset_counters": {
+      "name": "Reset API Counters",
+      "description": "Reset the daily API call counters"
+    }
+  }
+}

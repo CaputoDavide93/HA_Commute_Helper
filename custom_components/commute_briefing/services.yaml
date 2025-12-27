@@ -1,0 +1,11 @@
+refresh_commute:
+  name: Refresh Commute
+  description: Manually refresh commute data (bus times and traffic)
+
+send_notification:
+  name: Send Notification
+  description: Send a commute briefing notification
+
+reset_counters:
+  name: Reset API Counters
+  description: Reset the daily API call counters

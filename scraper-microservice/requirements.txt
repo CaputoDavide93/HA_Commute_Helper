@@ -1,0 +1,15 @@
+# Lothian Buses Scraper Microservice
+# Python dependencies
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Browser automation for scraping
+playwright>=1.40.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Async support
+asyncio-throttle>=1.0.2

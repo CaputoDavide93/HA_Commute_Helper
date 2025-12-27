@@ -1,0 +1,62 @@
+# Lothian Buses Scraper Microservice
+# Docker Compose configuration
+
+version: '3.8'
+
+services:
+  lothian-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lothian-buses-scraper
+    restart: unless-stopped
+    
+    # Port mapping - adjust if needed
+    ports:
+      - "8765:8765"
+    
+    # Environment configuration
+    environment:
+      - PORT=8765
+      - HOST=0.0.0.0
+      - CACHE_TTL_SECONDS=90
+      - REQUEST_TIMEOUT_SECONDS=30
+      - DEBUG=false
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Security options for Chromium
+    security_opt:
+      - seccomp:unconfined
+    
+    # Shared memory for browser
+    shm_size: 256mb
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Network configuration if running alongside Home Assistant
+networks:
+  default:
+    name: homeassistant
+    external: true

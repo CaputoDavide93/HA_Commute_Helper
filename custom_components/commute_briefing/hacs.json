@@ -1,0 +1,8 @@
+{
+  "name": "Commute Briefing",
+  "render_readme": true,
+  "domains": ["sensor", "binary_sensor", "button"],
+  "country": ["GB"],
+  "homeassistant": "2023.1.0",
+  "iot_class": "cloud_polling"
+}

@@ -1,0 +1,896 @@
+# =============================================================================
+# Home Assistant Commute Briefing Package
+# =============================================================================
+# A free-first, multi-source commute briefing solution for Home Assistant
+# 
+# Features:
+# - Traffic ETA via Waze Travel Time integration (free)
+# - Bus departures via TransportAPI (limited free tier: 30 req/day)
+# - Emergency fallback via local scraping microservice
+# - Quota management to stay within free limits
+# - Manual refresh button for on-demand updates
+#
+# Installation:
+# 1. Copy this file to your HA config/packages/ directory
+# 2. Add the secrets to your secrets.yaml
+# 3. Restart Home Assistant
+# 4. Set up the Waze Travel Time integration via UI
+# =============================================================================
+
+# =============================================================================
+# CONFIGURATION VARIABLES (customize these)
+# =============================================================================
+homeassistant:
+  customize:
+    package.commute_briefing:
+      # These are documentation-only; actual config is in input helpers below
+      home_postcode: "EH52 6XX"  # Replace with your home postcode
+      work_postcode: "EH1 1XX"   # Replace with your work postcode
+      commute_window_start: "08:00"
+      commute_window_end: "09:00"
+      office_keywords: ["Office", "Edinburgh"]
+      wfh_keywords: ["WFH", "Home"]
+      traffic_delay_threshold_min: 10
+      bus_gap_threshold_min: 20
+
+# =============================================================================
+# INPUT HELPERS
+# =============================================================================
+input_button:
+  commute_refresh_now:
+    name: "Refresh Commute Info Now"
+    icon: mdi:refresh
+
+input_boolean:
+  commute_office_day_override:
+    name: "Force Office Day Override"
+    icon: mdi:office-building
+
+input_number:
+  transportapi_calls_used_today:
+    name: "TransportAPI Calls Used Today"
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+    icon: mdi:counter
+
+  transportapi_calls_used_today_auto:
+    name: "TransportAPI Auto Calls Used Today"
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+    icon: mdi:counter
+
+  commute_baseline_minutes:
+    name: "Commute Baseline Minutes"
+    min: 10
+    max: 120
+    step: 1
+    initial: 45
+    mode: box
+    icon: mdi:clock-outline
+    unit_of_measurement: "min"
+
+  traffic_delay_threshold:
+    name: "Traffic Delay Threshold"
+    min: 0
+    max: 60
+    step: 1
+    initial: 10
+    mode: box
+    icon: mdi:car-clock
+    unit_of_measurement: "min"
+
+  bus_gap_threshold:
+    name: "Bus Gap Threshold"
+    min: 5
+    max: 60
+    step: 1
+    initial: 20
+    mode: box
+    icon: mdi:bus-clock
+    unit_of_measurement: "min"
+
+  transportapi_daily_quota:
+    name: "TransportAPI Daily Quota"
+    min: 1
+    max: 100
+    step: 1
+    initial: 30
+    mode: box
+    icon: mdi:api
+
+  transportapi_reserved_for_manual:
+    name: "TransportAPI Reserved for Manual"
+    min: 0
+    max: 20
+    step: 1
+    initial: 6
+    mode: box
+    icon: mdi:hand-pointing-up
+
+  max_auto_transportapi_calls:
+    name: "Max Automatic TransportAPI Calls/Day"
+    min: 1
+    max: 30
+    step: 1
+    initial: 10
+    mode: box
+    icon: mdi:robot
+
+input_datetime:
+  last_commute_check_time:
+    name: "Last Commute Check Time"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-check
+
+  commute_window_start:
+    name: "Commute Window Start"
+    has_date: false
+    has_time: true
+    initial: "08:00"
+    icon: mdi:clock-start
+
+  commute_window_end:
+    name: "Commute Window End"
+    has_date: false
+    has_time: true
+    initial: "09:00"
+    icon: mdi:clock-end
+
+input_text:
+  bus_stop_atco_primary:
+    name: "Primary Bus Stop ATCO Code"
+    initial: ""
+    max: 20
+    icon: mdi:bus-stop
+
+  bus_stop_atco_backup:
+    name: "Backup Bus Stop ATCO Code"
+    initial: ""
+    max: 20
+    icon: mdi:bus-stop-uncovered
+
+  bus_routes_allowlist:
+    name: "Bus Routes Allowlist (comma-separated)"
+    initial: ""
+    max: 100
+    icon: mdi:filter-variant
+
+  office_keywords:
+    name: "Office Keywords (comma-separated)"
+    initial: "Office,Edinburgh"
+    max: 200
+    icon: mdi:office-building
+
+  wfh_keywords:
+    name: "WFH Keywords (comma-separated)"
+    initial: "WFH,Home,Remote"
+    max: 200
+    icon: mdi:home
+
+  notify_target:
+    name: "Notification Target Service"
+    initial: "notify.mobile_app_iphone"
+    max: 100
+    icon: mdi:cellphone-message
+
+  scraper_base_url:
+    name: "Scraper Microservice Base URL"
+    initial: "http://localhost:8765"
+    max: 200
+    icon: mdi:server
+
+  work_calendar_entity:
+    name: "Work Calendar Entity ID"
+    initial: "calendar.work"
+    max: 100
+    icon: mdi:calendar
+
+# =============================================================================
+# REST SENSORS - TransportAPI
+# =============================================================================
+rest:
+  # Primary bus stop - TransportAPI
+  - resource_template: >-
+      https://transportapi.com/v3/uk/bus/stop/{{ states('input_text.bus_stop_atco_primary') }}/live.json?app_id={{ states('input_text.transportapi_app_id_helper') | default('') }}&app_key={{ states('input_text.transportapi_app_key_helper') | default('') }}&group=route&nextbuses=yes
+    scan_interval: 86400  # Don't auto-poll; we trigger manually
+    timeout: 30
+    sensor:
+      - name: "TransportAPI Primary Raw"
+        unique_id: transportapi_primary_raw
+        value_template: >-
+          {% if value_json.departures is defined %}
+            OK
+          {% else %}
+            Error
+          {% endif %}
+        json_attributes:
+          - departures
+          - stop_name
+          - bearing
+          - atcocode
+          - request_time
+        availability: >-
+          {{ states('input_text.bus_stop_atco_primary') | length > 0 }}
+
+  # Backup bus stop - TransportAPI (optional)
+  - resource_template: >-
+      https://transportapi.com/v3/uk/bus/stop/{{ states('input_text.bus_stop_atco_backup') }}/live.json?app_id={{ states('input_text.transportapi_app_id_helper') | default('') }}&app_key={{ states('input_text.transportapi_app_key_helper') | default('') }}&group=route&nextbuses=yes
+    scan_interval: 86400
+    timeout: 30
+    sensor:
+      - name: "TransportAPI Backup Raw"
+        unique_id: transportapi_backup_raw
+        value_template: >-
+          {% if value_json.departures is defined %}
+            OK
+          {% else %}
+            Error
+          {% endif %}
+        json_attributes:
+          - departures
+          - stop_name
+          - bearing
+          - atcocode
+          - request_time
+        availability: >-
+          {{ states('input_text.bus_stop_atco_backup') | length > 0 }}
+
+  # Scraper microservice - Primary stop
+  - resource_template: >-
+      {{ states('input_text.scraper_base_url') }}/lothian/stop/{{ states('input_text.bus_stop_atco_primary') }}
+    scan_interval: 86400  # Don't auto-poll; we trigger manually
+    timeout: 60
+    sensor:
+      - name: "Lothian Scrape Primary Raw"
+        unique_id: lothian_scrape_primary_raw
+        value_template: >-
+          {% if value_json.departures is defined %}
+            OK
+          {% else %}
+            Error
+          {% endif %}
+        json_attributes:
+          - stop_code
+          - generated_at
+          - departures
+          - error
+        availability: >-
+          {{ states('input_text.bus_stop_atco_primary') | length > 0 }}
+
+# =============================================================================
+# HELPER INPUT TEXTS FOR SECRETS (set via automation at startup)
+# =============================================================================
+# These are populated from secrets at startup via automation
+input_text:
+  transportapi_app_id_helper:
+    name: "TransportAPI App ID (Internal)"
+    max: 50
+    mode: password
+
+  transportapi_app_key_helper:
+    name: "TransportAPI App Key (Internal)"
+    max: 100
+    mode: password
+
+# =============================================================================
+# TEMPLATE SENSORS - Processed Data
+# =============================================================================
+template:
+  - sensor:
+      # Traffic delay calculation
+      - name: "Traffic Delay Minutes"
+        unique_id: traffic_delay_minutes
+        unit_of_measurement: "min"
+        icon: mdi:car-clock
+        state: >-
+          {% set waze = states('sensor.waze_home_to_work_minutes') | float(0) %}
+          {% set baseline = states('input_number.commute_baseline_minutes') | float(45) %}
+          {% set delay = (waze - baseline) | round(0) %}
+          {{ delay if delay > 0 else 0 }}
+        availability: >-
+          {{ states('sensor.waze_home_to_work_minutes') not in ['unknown', 'unavailable'] }}
+
+      # Next bus minutes - Primary (from TransportAPI)
+      - name: "Next Bus Minutes Primary"
+        unique_id: next_bus_minutes_primary
+        unit_of_measurement: "min"
+        icon: mdi:bus-clock
+        state: >-
+          {% set departures = state_attr('sensor.transportapi_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures %}
+            {% set ns = namespace(found=false, mins=999) %}
+            {% for route, deps in departures.items() %}
+              {% if not allowlist or route in allowlist %}
+                {% for dep in deps %}
+                  {% if dep.best_departure_estimate is defined %}
+                    {% set est = dep.best_departure_estimate %}
+                    {% set now = now() %}
+                    {% set dep_time = strptime(est, '%H:%M') %}
+                    {% set dep_dt = now.replace(hour=dep_time.hour, minute=dep_time.minute, second=0, microsecond=0) %}
+                    {% if dep_dt < now %}
+                      {% set dep_dt = dep_dt + timedelta(days=1) %}
+                    {% endif %}
+                    {% set mins = ((dep_dt - now).total_seconds() / 60) | round(0) %}
+                    {% if mins < ns.mins and mins >= 0 %}
+                      {% set ns.mins = mins %}
+                      {% set ns.found = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.mins if ns.found else 'unknown' }}
+          {% else %}
+            unknown
+          {% endif %}
+        availability: >-
+          {{ states('sensor.transportapi_primary_raw') == 'OK' }}
+
+      # Next bus time - Primary
+      - name: "Next Bus Time Primary"
+        unique_id: next_bus_time_primary
+        icon: mdi:clock
+        state: >-
+          {% set departures = state_attr('sensor.transportapi_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures %}
+            {% set ns = namespace(found=false, time='', mins=999) %}
+            {% for route, deps in departures.items() %}
+              {% if not allowlist or route in allowlist %}
+                {% for dep in deps %}
+                  {% if dep.best_departure_estimate is defined %}
+                    {% set est = dep.best_departure_estimate %}
+                    {% set now = now() %}
+                    {% set dep_time = strptime(est, '%H:%M') %}
+                    {% set dep_dt = now.replace(hour=dep_time.hour, minute=dep_time.minute, second=0, microsecond=0) %}
+                    {% if dep_dt < now %}
+                      {% set dep_dt = dep_dt + timedelta(days=1) %}
+                    {% endif %}
+                    {% set mins = ((dep_dt - now).total_seconds() / 60) | round(0) %}
+                    {% if mins < ns.mins and mins >= 0 %}
+                      {% set ns.mins = mins %}
+                      {% set ns.time = est %}
+                      {% set ns.found = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.time if ns.found else 'unknown' }}
+          {% else %}
+            unknown
+          {% endif %}
+        availability: >-
+          {{ states('sensor.transportapi_primary_raw') == 'OK' }}
+
+      # Next bus route - Primary
+      - name: "Next Bus Route Primary"
+        unique_id: next_bus_route_primary
+        icon: mdi:bus
+        state: >-
+          {% set departures = state_attr('sensor.transportapi_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures %}
+            {% set ns = namespace(found=false, route='', mins=999) %}
+            {% for route, deps in departures.items() %}
+              {% if not allowlist or route in allowlist %}
+                {% for dep in deps %}
+                  {% if dep.best_departure_estimate is defined %}
+                    {% set est = dep.best_departure_estimate %}
+                    {% set now = now() %}
+                    {% set dep_time = strptime(est, '%H:%M') %}
+                    {% set dep_dt = now.replace(hour=dep_time.hour, minute=dep_time.minute, second=0, microsecond=0) %}
+                    {% if dep_dt < now %}
+                      {% set dep_dt = dep_dt + timedelta(days=1) %}
+                    {% endif %}
+                    {% set mins = ((dep_dt - now).total_seconds() / 60) | round(0) %}
+                    {% if mins < ns.mins and mins >= 0 %}
+                      {% set ns.mins = mins %}
+                      {% set ns.route = route %}
+                      {% set ns.found = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.route if ns.found else 'unknown' }}
+          {% else %}
+            unknown
+          {% endif %}
+        availability: >-
+          {{ states('sensor.transportapi_primary_raw') == 'OK' }}
+
+      # Next bus is realtime - Primary
+      - name: "Next Bus Is Realtime Primary"
+        unique_id: next_bus_is_realtime_primary
+        icon: mdi:antenna
+        state: >-
+          {% set departures = state_attr('sensor.transportapi_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures %}
+            {% set ns = namespace(found=false, realtime=false, mins=999) %}
+            {% for route, deps in departures.items() %}
+              {% if not allowlist or route in allowlist %}
+                {% for dep in deps %}
+                  {% if dep.best_departure_estimate is defined %}
+                    {% set est = dep.best_departure_estimate %}
+                    {% set now = now() %}
+                    {% set dep_time = strptime(est, '%H:%M') %}
+                    {% set dep_dt = now.replace(hour=dep_time.hour, minute=dep_time.minute, second=0, microsecond=0) %}
+                    {% if dep_dt < now %}
+                      {% set dep_dt = dep_dt + timedelta(days=1) %}
+                    {% endif %}
+                    {% set mins = ((dep_dt - now).total_seconds() / 60) | round(0) %}
+                    {% if mins < ns.mins and mins >= 0 %}
+                      {% set ns.mins = mins %}
+                      {% set ns.realtime = dep.expected_departure_time is defined %}
+                      {% set ns.found = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.realtime if ns.found else false }}
+          {% else %}
+            false
+          {% endif %}
+        availability: >-
+          {{ states('sensor.transportapi_primary_raw') == 'OK' }}
+
+      # Next bus status - Primary
+      - name: "Next Bus Status Primary"
+        unique_id: next_bus_status_primary
+        icon: mdi:information
+        state: >-
+          {% set departures = state_attr('sensor.transportapi_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures %}
+            {% set ns = namespace(found=false, status='Unknown', mins=999) %}
+            {% for route, deps in departures.items() %}
+              {% if not allowlist or route in allowlist %}
+                {% for dep in deps %}
+                  {% if dep.best_departure_estimate is defined %}
+                    {% set est = dep.best_departure_estimate %}
+                    {% set now = now() %}
+                    {% set dep_time = strptime(est, '%H:%M') %}
+                    {% set dep_dt = now.replace(hour=dep_time.hour, minute=dep_time.minute, second=0, microsecond=0) %}
+                    {% if dep_dt < now %}
+                      {% set dep_dt = dep_dt + timedelta(days=1) %}
+                    {% endif %}
+                    {% set mins = ((dep_dt - now).total_seconds() / 60) | round(0) %}
+                    {% if mins < ns.mins and mins >= 0 %}
+                      {% set ns.mins = mins %}
+                      {% set ns.found = true %}
+                      {% if dep.expected_departure_time is defined and dep.aimed_departure_time is defined %}
+                        {% set aimed = strptime(dep.aimed_departure_time, '%H:%M') %}
+                        {% set expected = strptime(dep.expected_departure_time, '%H:%M') %}
+                        {% if expected > aimed %}
+                          {% set ns.status = 'Late' %}
+                        {% elif expected < aimed %}
+                          {% set ns.status = 'Early' %}
+                        {% else %}
+                          {% set ns.status = 'On time' %}
+                        {% endif %}
+                      {% else %}
+                        {% set ns.status = 'Scheduled' %}
+                      {% endif %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.status if ns.found else 'Unknown' }}
+          {% else %}
+            Unknown
+          {% endif %}
+        availability: >-
+          {{ states('sensor.transportapi_primary_raw') == 'OK' }}
+
+      # Next bus minutes from scraper (fallback)
+      - name: "Next Bus Minutes Scrape"
+        unique_id: next_bus_minutes_scrape
+        unit_of_measurement: "min"
+        icon: mdi:bus-clock
+        state: >-
+          {% set departures = state_attr('sensor.lothian_scrape_primary_raw', 'departures') %}
+          {% set allowlist = states('input_text.bus_routes_allowlist').split(',') | map('trim') | list %}
+          {% set allowlist = allowlist if allowlist[0] | length > 0 else [] %}
+          {% if departures and departures | length > 0 %}
+            {% set ns = namespace(found=false, mins=999) %}
+            {% for dep in departures %}
+              {% if not allowlist or dep.route in allowlist %}
+                {% set mins = dep.due_mins | int(999) %}
+                {% if mins < ns.mins %}
+                  {% set ns.mins = mins %}
+                  {% set ns.found = true %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.mins if ns.found else 'unknown' }}
+          {% else %}
+            unknown
+          {% endif %}
+        availability: >-
+          {{ states('sensor.lothian_scrape_primary_raw') == 'OK' }}
+
+      # Best next bus minutes (prefers TransportAPI, falls back to scrape)
+      - name: "Next Bus Minutes Best"
+        unique_id: next_bus_minutes_best
+        unit_of_measurement: "min"
+        icon: mdi:bus-clock
+        state: >-
+          {% set api_mins = states('sensor.next_bus_minutes_primary') %}
+          {% set scrape_mins = states('sensor.next_bus_minutes_scrape') %}
+          {% if api_mins not in ['unknown', 'unavailable'] and api_mins | int(999) < 999 %}
+            {{ api_mins }}
+          {% elif scrape_mins not in ['unknown', 'unavailable'] and scrape_mins | int(999) < 999 %}
+            {{ scrape_mins }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      # Bus data source indicator
+      - name: "Bus Data Source"
+        unique_id: bus_data_source
+        icon: mdi:database
+        state: >-
+          {% set api_mins = states('sensor.next_bus_minutes_primary') %}
+          {% if api_mins not in ['unknown', 'unavailable'] and api_mins | int(999) < 999 %}
+            TransportAPI
+          {% elif states('sensor.next_bus_minutes_scrape') not in ['unknown', 'unavailable'] %}
+            Lothian Scrape
+          {% else %}
+            None
+          {% endif %}
+
+  - binary_sensor:
+      # Is today a commute day?
+      - name: "Commute Day"
+        unique_id: commute_day
+        icon: mdi:office-building
+        state: >-
+          {% set override = is_state('input_boolean.commute_office_day_override', 'on') %}
+          {% if override %}
+            true
+          {% else %}
+            {% set calendar = states('input_text.work_calendar_entity') %}
+            {% set calendar_state = states(calendar) %}
+            {% set office_keywords = states('input_text.office_keywords').split(',') | map('trim') | map('lower') | list %}
+            {% set wfh_keywords = states('input_text.wfh_keywords').split(',') | map('trim') | map('lower') | list %}
+            {% set event_title = state_attr(calendar, 'message') | default('') | lower %}
+            {% set is_wfh = false %}
+            {% set is_office = false %}
+            {% for kw in wfh_keywords %}
+              {% if kw in event_title %}
+                {% set is_wfh = true %}
+              {% endif %}
+            {% endfor %}
+            {% for kw in office_keywords %}
+              {% if kw in event_title %}
+                {% set is_office = true %}
+              {% endif %}
+            {% endfor %}
+            {{ calendar_state == 'on' and is_office and not is_wfh }}
+          {% endif %}
+        availability: true
+
+      # Can we call TransportAPI (automatic)?
+      - name: "Can Call TransportAPI Auto"
+        unique_id: can_call_transportapi_auto
+        icon: mdi:api
+        state: >-
+          {% set used = states('input_number.transportapi_calls_used_today') | int(0) %}
+          {% set used_auto = states('input_number.transportapi_calls_used_today_auto') | int(0) %}
+          {% set quota = states('input_number.transportapi_daily_quota') | int(30) %}
+          {% set reserved = states('input_number.transportapi_reserved_for_manual') | int(6) %}
+          {% set max_auto = states('input_number.max_auto_transportapi_calls') | int(10) %}
+          {{ used < (quota - reserved) and used_auto < max_auto }}
+
+      # Can we call TransportAPI (manual)?
+      - name: "Can Call TransportAPI Manual"
+        unique_id: can_call_transportapi_manual
+        icon: mdi:api
+        state: >-
+          {% set used = states('input_number.transportapi_calls_used_today') | int(0) %}
+          {% set quota = states('input_number.transportapi_daily_quota') | int(30) %}
+          {{ used < quota }}
+
+      # Is there a potential issue requiring extra check?
+      - name: "Commute Potential Issue"
+        unique_id: commute_potential_issue
+        icon: mdi:alert
+        state: >-
+          {% set delay = states('sensor.traffic_delay_minutes') | int(0) %}
+          {% set delay_threshold = states('input_number.traffic_delay_threshold') | int(10) %}
+          {% set bus_mins = states('sensor.next_bus_minutes_best') %}
+          {% set bus_threshold = states('input_number.bus_gap_threshold') | int(20) %}
+          {% set bus_mins_int = bus_mins | int(999) if bus_mins not in ['unknown', 'unavailable'] else 999 %}
+          {{ delay >= delay_threshold or bus_mins_int >= bus_threshold or bus_mins_int == 999 }}
+
+# =============================================================================
+# SCRIPTS
+# =============================================================================
+script:
+  # Increment TransportAPI counter
+  commute_increment_api_counter:
+    alias: "Commute: Increment API Counter"
+    icon: mdi:counter
+    mode: single
+    sequence:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.transportapi_calls_used_today
+        data:
+          value: >-
+            {{ (states('input_number.transportapi_calls_used_today') | int(0)) + 1 }}
+
+  # Increment TransportAPI auto counter
+  commute_increment_api_counter_auto:
+    alias: "Commute: Increment API Counter (Auto)"
+    icon: mdi:counter
+    mode: single
+    sequence:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.transportapi_calls_used_today_auto
+        data:
+          value: >-
+            {{ (states('input_number.transportapi_calls_used_today_auto') | int(0)) + 1 }}
+
+  # Reset daily counters
+  commute_reset_daily_counters:
+    alias: "Commute: Reset Daily Counters"
+    icon: mdi:refresh
+    mode: single
+    sequence:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.transportapi_calls_used_today
+        data:
+          value: 0
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.transportapi_calls_used_today_auto
+        data:
+          value: 0
+
+  # Refresh TransportAPI data
+  commute_refresh_transportapi:
+    alias: "Commute: Refresh TransportAPI"
+    icon: mdi:api
+    mode: single
+    sequence:
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.transportapi_primary_raw
+      - delay:
+          seconds: 2
+
+  # Refresh scraper data
+  commute_refresh_scraper:
+    alias: "Commute: Refresh Scraper"
+    icon: mdi:web
+    mode: single
+    sequence:
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.lothian_scrape_primary_raw
+      - delay:
+          seconds: 3
+
+  # Main commute check (automatic)
+  commute_check_auto:
+    alias: "Commute: Automatic Check"
+    icon: mdi:clipboard-check
+    mode: single
+    sequence:
+      # Update last check time
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.last_commute_check_time
+        data:
+          datetime: "{{ now().isoformat() }}"
+      
+      # Refresh Waze (always free)
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.waze_home_to_work_minutes
+      - delay:
+          seconds: 2
+      
+      # Try TransportAPI if quota allows
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.can_call_transportapi_auto
+                state: "on"
+            sequence:
+              - service: script.commute_refresh_transportapi
+              - service: script.commute_increment_api_counter
+              - service: script.commute_increment_api_counter_auto
+        default:
+          # Fallback to scraper
+          - service: script.commute_refresh_scraper
+      
+      - delay:
+          seconds: 2
+      
+      # Send notification
+      - service: script.commute_send_notification
+
+  # Manual commute check
+  commute_check_manual:
+    alias: "Commute: Manual Check"
+    icon: mdi:hand-pointing-up
+    mode: single
+    sequence:
+      # Update last check time
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.last_commute_check_time
+        data:
+          datetime: "{{ now().isoformat() }}"
+      
+      # Refresh Waze (always free)
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.waze_home_to_work_minutes
+      - delay:
+          seconds: 2
+      
+      # Try TransportAPI if quota allows (manual has higher limit)
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.can_call_transportapi_manual
+                state: "on"
+            sequence:
+              - service: script.commute_refresh_transportapi
+              - service: script.commute_increment_api_counter
+        default:
+          # Fallback to scraper
+          - service: script.commute_refresh_scraper
+      
+      - delay:
+          seconds: 2
+      
+      # Send notification
+      - service: script.commute_send_notification
+
+  # Send commute notification
+  commute_send_notification:
+    alias: "Commute: Send Notification"
+    icon: mdi:message-badge
+    mode: single
+    sequence:
+      - variables:
+          waze_mins: "{{ states('sensor.waze_home_to_work_minutes') | int(0) }}"
+          delay_mins: "{{ states('sensor.traffic_delay_minutes') | int(0) }}"
+          bus_mins: "{{ states('sensor.next_bus_minutes_best') }}"
+          bus_time: "{{ states('sensor.next_bus_time_primary') }}"
+          bus_route: "{{ states('sensor.next_bus_route_primary') }}"
+          bus_status: "{{ states('sensor.next_bus_status_primary') }}"
+          bus_source: "{{ states('sensor.bus_data_source') }}"
+          delay_sign: "{{ '+' if delay_mins > 0 else '' }}"
+      - service: "{{ states('input_text.notify_target') }}"
+        data:
+          title: "🚗 Commute Briefing"
+          message: >-
+            Traffic: {{ waze_mins }} min ({{ delay_sign }}{{ delay_mins }} vs usual)
+            {% if bus_mins not in ['unknown', 'unavailable'] %}
+            🚌 Bus: Route {{ bus_route }} in {{ bus_mins }} min{% if bus_time not in ['unknown', 'unavailable'] %} at {{ bus_time }}{% endif %} — {{ bus_status }} ({{ bus_source }})
+            {% else %}
+            🚌 Bus: No data available
+            {% endif %}
+          data:
+            push:
+              sound:
+                name: default
+                critical: 0
+            actions:
+              - action: COMMUTE_REFRESH
+                title: "Refresh"
+                icon: "sfsymbols:arrow.clockwise"
+
+# =============================================================================
+# AUTOMATIONS
+# =============================================================================
+automation:
+  # Daily counter reset at 00:05
+  - id: commute_daily_reset
+    alias: "Commute: Daily Counter Reset"
+    description: "Reset TransportAPI counters at midnight"
+    trigger:
+      - platform: time
+        at: "00:05:00"
+    action:
+      - service: script.commute_reset_daily_counters
+
+  # Load secrets at startup
+  - id: commute_load_secrets
+    alias: "Commute: Load Secrets at Startup"
+    description: "Load TransportAPI credentials from secrets"
+    trigger:
+      - platform: homeassistant
+        event: start
+    action:
+      - service: input_text.set_value
+        target:
+          entity_id: input_text.transportapi_app_id_helper
+        data:
+          value: !secret transportapi_app_id
+      - service: input_text.set_value
+        target:
+          entity_id: input_text.transportapi_app_key_helper
+        data:
+          value: !secret transportapi_app_key
+
+  # Morning check at commute window - 30 min (e.g., 07:30)
+  - id: commute_morning_check
+    alias: "Commute: Morning Check"
+    description: "Primary morning commute check 30 minutes before window"
+    trigger:
+      - platform: template
+        value_template: >-
+          {% set start = states('input_datetime.commute_window_start') %}
+          {% if start %}
+            {% set start_time = today_at(start) %}
+            {% set check_time = start_time - timedelta(minutes=30) %}
+            {{ now() >= check_time and now() < check_time + timedelta(minutes=1) }}
+          {% else %}
+            false
+          {% endif %}
+    condition:
+      - condition: state
+        entity_id: binary_sensor.commute_day
+        state: "on"
+    action:
+      - service: script.commute_check_auto
+      - delay:
+          seconds: 10
+      # Schedule follow-up if potential issue detected
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.commute_potential_issue
+                state: "on"
+            sequence:
+              - delay:
+                  minutes: 20
+              - condition: state
+                entity_id: binary_sensor.commute_day
+                state: "on"
+              - service: script.commute_check_auto
+
+  # Manual refresh button handler
+  - id: commute_manual_refresh
+    alias: "Commute: Manual Refresh Button"
+    description: "Handle manual refresh button press"
+    trigger:
+      - platform: state
+        entity_id: input_button.commute_refresh_now
+    action:
+      - service: script.commute_check_manual
+
+  # Handle notification action (iOS)
+  - id: commute_notification_action
+    alias: "Commute: Handle Notification Action"
+    description: "Handle refresh action from notification"
+    trigger:
+      - platform: event
+        event_type: ios.notification_action_fired
+        event_data:
+          actionName: COMMUTE_REFRESH
+    action:
+      - service: script.commute_check_manual
